@@ -98,7 +98,7 @@ Hello there!
 ```bash
 # Clone the repository
 git clone https://github.com/nazar-ponomarenko-dots/Terra
-cd terra
+cd Terra
 ```
 
 ```bash
