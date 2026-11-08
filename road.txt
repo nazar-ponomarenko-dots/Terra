@@ -4,3 +4,9 @@
 [] - Codegen: apply --safe checked arithmetic to compound assignments (`x += y`) and to arguments passed to user functions when they cross a trust boundary.
 [] - Tests: e2e coverage for `--safe` in-bounds execution of every array/slice example (compile all examples twice: default and --safe).
 [] - Build: decide the fate of `CORE_NO_STDIO` (defined for EMBEDDED but consumed by no core source).
+[] - Codegen: zero-initialize every generated local (`= {0}`) so no path can read an uninitialized variable (C99 UB).
+[] - Codegen: replace hidden struct padding with explicit zero-filled `uint8_t _padN[...]` fields so padding bytes cannot leak through `memcmp`/I/O.
+[] - Codegen: emit C99 static assertions (negative-array-size trick) for `sizeof(void*)` and every generated struct against the compiler-computed layout.
+[] - Runtime: add `zl_secure_zero` (volatile loop + asm memory barrier) so Dead Store Elimination cannot remove secret wiping.
+[x] - Build/CLI: force a non-overridable hardening flag profile for `--compile` (`-fwrapv -fno-strict-aliasing -fno-delete-null-pointer-checks -fstack-protector-strong -fstack-clash-protection -D_FORTIFY_SOURCE=3`).
+[] - Codegen: deterministic name mangling with a `zl_` prefix for every emitted C identifier to avoid C keywords, reserved names and standard-header macros.

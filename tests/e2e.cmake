@@ -87,11 +87,23 @@ if(found EQUAL -1)
 endif()
 
 # Optional exact byte count, for outputs that embed NUL bytes which the
-# substring check above cannot represent.
+# substring check above cannot represent. Capture stdout to a file: CMake
+# strings cannot hold NUL bytes, but file(SIZE) counts the raw bytes.
 if(DEFINED EXPECT_LEN)
-    string(LENGTH "${run_stdout}" actual_len)
+    set(output_file "${WORK}/stdout.bin")
+    execute_process(
+        COMMAND "${binary}"
+        RESULT_VARIABLE len_run_result
+        OUTPUT_FILE "${output_file}"
+        ERROR_VARIABLE len_run_stderr
+    )
+    if(NOT len_run_result EQUAL 0)
+        message(FATAL_ERROR
+            "generated program failed while capturing byte count (${len_run_result})\nstderr:\n${len_run_stderr}")
+    endif()
+    file(SIZE "${output_file}" actual_len)
     if(NOT actual_len EQUAL EXPECT_LEN)
         message(FATAL_ERROR
-            "program output length mismatch: expected ${EXPECT_LEN}, got ${actual_len}\nactual output:\n${run_stdout}")
+            "program output length mismatch: expected ${EXPECT_LEN}, got ${actual_len}")
     endif()
 endif()

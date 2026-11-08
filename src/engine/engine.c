@@ -122,8 +122,26 @@ static bool compile_generated_program(const char *code, const char *output,
         if (program->items[i] != NULL &&
             program->items[i]->kind == TESS_STMT_LINK) link_count++;
     }
+    /* Defense in depth for hosted builds: turn signed overflow and strict
+     * aliasing into defined behavior, harden the stack, and enable libc
+     * fortification. These are fixed and not user-overridable. Freestanding
+     * objects have no hosted runtime or program image to protect. */
+    static const char *const hardening_flags[] = {
+        "-O2",
+        "-fwrapv",
+        "-fno-strict-aliasing",
+        "-fno-delete-null-pointer-checks",
+        "-fstack-protector-strong",
+        "-fstack-clash-protection",
+        "-D_FORTIFY_SOURCE=3",
+        "-fPIE",
+        "-pie",
+    };
+    size_t hardening_count = freestanding
+        ? 0
+        : sizeof hardening_flags / sizeof hardening_flags[0];
     size_t extra_options = (target_triple != NULL ? 2u : 0u) +
-                           (freestanding ? 3u : 0u);
+                           (freestanding ? 3u : 0u) + hardening_count;
     if (link_count > SIZE_MAX - 11 - extra_options) {
         unlink(temp_output);
         free(temp_output);
@@ -155,6 +173,10 @@ static bool compile_generated_program(const char *code, const char *output,
     if (target_triple != NULL) {
         args[n++] = "-target";
         args[n++] = (char *)target_triple;
+    }
+    if (!freestanding) {
+        for (size_t i = 0; i < hardening_count; i++)
+            args[n++] = (char *)hardening_flags[i];
     }
     if (freestanding) {
         args[n++] = "-c";

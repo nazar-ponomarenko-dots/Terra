@@ -98,7 +98,9 @@ static void test_string_methods(void) {
 }
 
 static void test_safe_mode(void) {
-    const char *src = "let a = 2;\nput(a + 3);\nlet nums = [1, 2];\nput(nums[0]);\n";
+    const char *src = "let a = 2;\nput(a + 3);\n"
+                      "let shifted = a << 4;\nput(shifted >> 1);\n"
+                      "let nums = [1, 2];\nput(nums[0]);\n";
     tess_program *program = parse("safe.t", src);
     check(program != NULL, "safe-mode program parses");
     if (program == NULL) return;
@@ -110,10 +112,16 @@ static void test_safe_mode(void) {
     if (code != NULL) {
         check(strstr(code, "terra_checked_add(a, 3)") != NULL,
               "safe mode wraps integer addition in a checked helper");
+        check(strstr(code, "terra_checked_shl(a, 4)") != NULL,
+              "safe mode wraps left shift in a checked helper");
+        check(strstr(code, "terra_checked_shr(shifted, 1)") != NULL,
+              "safe mode wraps right shift in a checked helper");
         check(strstr(code, "terra_check_index") != NULL,
               "safe mode bounds-checks array indexing");
         check(strstr(code, "void terra_panic(const char* msg)") != NULL,
               "safe mode emits the panic helper");
+        check(strstr(code, "abort()") != NULL,
+              "panic terminates the program instead of returning");
         free(code);
     }
 

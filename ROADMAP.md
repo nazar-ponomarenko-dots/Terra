@@ -123,6 +123,126 @@ programs. It still does not link a kernel or produce a bootable image.
 
 ---
 
+## 🛡️ Zero Trust C99 Backend & Compiler Hardening (cross-cutting track)
+
+C99 is not a portable assembler. Signed overflow, invalid shifts, signed
+division (`INT_MIN / -1`), float-to-int casts, uninitialized reads, unread
+padding bytes, strict-aliasing and data races are Undefined Behavior, and an
+optimizing C compiler is allowed to delete the very checks meant to prevent
+them. This track makes the generated C99 a mathematically UB-free subset, and
+makes the compiler's own pipeline distrustful: no pass trusts a previous pass.
+
+Small, local items from this track are also queued in `road.txt`; the bulk is
+planned here because it changes codegen, IR and language semantics.
+
+### 1. Defensive C99 code generation
+
+- [ ] Lower every expression to ANF/TAC: one side effect per generated C
+  statement, explicit temporaries, and no reliance on C's unspecified argument
+  and operand evaluation order (`f(g(), h())`, `a[i] = i++`).
+- [ ] Route all signed `+ - * / % << >>` through checked runtime helpers
+  (`zl_add_i32`, `zl_div_i32`, `zl_shl_u32`, ...) covering overflow,
+  division-by-zero, `INT_MIN / -1` and shift-amount bounds; use
+  `__builtin_*_overflow` on GCC/Clang with a pure-C99 unsigned fallback.
+- [ ] Check every `double -> int` conversion for NaN and out-of-range values
+  per ISO C99 §6.3.1.4 (`zl_f64_to_i32`) instead of a raw cast.
+- [ ] Represent every array/buffer/string crossing generated code as a
+  bounds-carrying descriptor (`{ptr, len, cap}`), never a bare `T*`; add
+  `restrict` where the language proves there is no mutable aliasing.
+- [ ] Zero-initialize every generated local (`= {0}`) and turn hidden struct
+  padding into explicit zero-filled `uint8_t _padN[...]` fields so padding
+  bytes never leak through `memcmp` or I/O.
+- [ ] Add `zl_secure_zero` backed by a `volatile` loop and an asm memory
+  barrier so Dead Store Elimination cannot remove secret wiping.
+- [ ] Emit C99 static assertions (negative-array-size trick) for
+  `sizeof(void*)` and every generated struct/record against the compiler's
+  computed layout, to catch ABI drift on other targets.
+- [x] Never emit a recoverable panic: `terra_panic` is `noreturn` and
+  terminates via `abort()`; no `setjmp`/`longjmp`-based recovery.
+- [ ] Emit `default: zl_panic("unreachable enum state")` in every generated
+  `switch` over enums/unions.
+- [ ] Add a forced, non-overridable compiler-flag profile for `--compile`:
+  `-std=c99 -fwrapv -fno-strict-aliasing -fno-delete-null-pointer-checks
+  -fstack-protector-strong -fstack-clash-protection -D_FORTIFY_SOURCE=3
+  -fPIE -pie`, plus an opt-in debug profile with
+  `-fsanitize=undefined,address,leak -fno-omit-frame-pointer`.
+- [ ] Define the concurrency story: C99 has no memory model, so shared
+  variables must use `__atomic_load_n`/`__atomic_store_n`/
+  `__atomic_compare_exchange_n` with `__ATOMIC_SEQ_CST`; `volatile` is not a
+  synchronization primitive.
+
+### 2. FFI isolation (Zero Trust boundary with native C)
+
+- [ ] Introduce FFI-only types: `c_ptr<T>`, `c_str`, and an `@c_layout`
+  attribute; language structs and slices are never passed to C directly.
+- [ ] Deep-copy or pin/freeze slices and buffers across the FFI boundary
+  instead of exposing live language-managed memory.
+- [ ] Mark every value returned from `extern "C"` as `tainted<T>`; forbid
+  using it as an index, allocation size, or dereference target until sanitized.
+- [ ] Require an explicit `sanitize(value) with (predicate) else { ... }`
+  gate (Sanitization Contract) to strip `tainted`.
+- [ ] Generate a trampoline around each FFI call: pre-call invariant checks,
+  stack-canary/metadata snapshot, and a post-call corruption check that panics.
+- [ ] Capability-based FFI: allow-list native symbols via a project manifest
+  (`allow_ffi = [...]`); a transitive dependency without a granted token is a
+  compile error.
+
+### 3. Zero Trust compiler internals (IR and analyses)
+
+- [ ] Introduce an explicit HIR → typed-SSA MIR → C-AST pipeline; no C99
+  emission through string concatenation or `sprintf`.
+- [ ] Make safety operations first-class IR nodes: `check_bounds` produces a
+  proof token consumed by `get_element_unchecked`; the unchecked node must not
+  verify without a dominating proof. Optimizations may only replace a check
+  with a `static_proof_interval`, never delete it.
+- [ ] Add an independent IR verifier after every optimization pass that fails
+  with an Internal Compiler Error instead of emitting vulnerable C.
+- [ ] Definite-assignment dataflow: prove no CFG path reads a variable in the
+  `Uninit` or `Moved` state.
+- [ ] Interval/value-range analysis feeding safety proofs and turning provably
+  safe checks into tokens; make provable overflow and division-by-zero
+  compile-time errors.
+- [ ] Escape/lifetime analysis: no reference to a stack local may escape via
+  return, a heap/global store, or a thread.
+- [ ] Totality/exhaustiveness checking for `match`/`switch` over enums and
+  tagged unions.
+- [ ] Call-graph-based stack-frame bounding with a recursion/indirect-call
+  depth guard (`++stack_depth > MAX_DEPTH -> panic`).
+- [ ] Deterministic name mangling for all emitted C identifiers to avoid C
+  keywords, reserved `_`/`__` names and standard-header macros.
+- [ ] Typed C-AST emitter in which a variable node cannot exist without an
+  initializer.
+
+### 4. Design by Contract (DbC)
+
+- [ ] Add `requires`, `ensures`, `invariant`, `old(expr)` and `result` syntax,
+  parsed into the AST.
+- [ ] Enforce a Pure Expression Check on all contract expressions: no
+  mutation, no non-pure calls, no I/O or FFI.
+- [ ] Feed `requires`/`invariant` facts into interval analysis so provably
+  safe operations in the body drop their runtime checks (static promotion);
+  insert call-site checks only when the caller cannot prove them.
+- [ ] Lower contracts in C99 with a single epilogue: replace every `return`
+  with `_zl_ret_val = ...; goto _zl_epilogue;`, snapshot `old(...)` in the
+  prologue after `requires`, and check invariants plus `ensures` at the
+  epilogue.
+- [ ] Check struct invariants on creation and after every mutating method.
+
+### 5. Remaining blind spots
+
+- [ ] Temporal memory safety: choose and document a model (generational
+  references with `{ptr, expected_gen}`, linear/affine ownership, or ARC
+  without cycles), since bounds-checked fat pointers only provide spatial
+  safety.
+- [ ] Define the safe-error story: `Result<T, E>` as a tagged union for
+  recoverable failures, while panics remain fatal and non-recoverable.
+- [ ] Treat FFI that can `longjmp` or throw across the C ABI as unsupported
+  and document the quarantine requirement.
+- [ ] Add sanitizer/static-analysis CI jobs (UBSan, ASan, LSan, `-fanalyzer`)
+  over all generated C and examples.
+
+---
+
 ### Phase X: Version 0.4 — Runtime Library & Executable Programs
 
 #### 🎯 Objectives
@@ -135,8 +255,8 @@ Create a complete runtime library and ensure Terra programs compile to fully exe
 
 ```c
 // Memory management
-void* terramalloc(size_t bytes);
-void terrafree(void* ptr);
+void* terra_malloc(size_t bytes);
+void terra_free(void* ptr);
 
 // Standard I/O
 void put(int value);
@@ -210,7 +330,7 @@ Benefits:
 
 ---
 
-### Phase 3: Version 0.5 — Optimizations & Multi-B Backend Support
+### Phase 3: Version 0.5 — Optimizations & Multi-Backend Support
 
 #### 🎯 Objectives
 
@@ -225,7 +345,7 @@ Apply optimization passes and enable multiple target backends.
 | Inline Expansion | Medium | Embed small functions | 🟡 Next |
 | Loop Unrolling | Medium | Expand loop iterations | 🔮 Future |
 
-#### ✨ Multi-B Backend Architecture
+#### ✨ Multi-Backend Architecture
 
 **Supported Backends:**
 - **C99 Backend** (✅ Implemented) - Production-ready
@@ -270,6 +390,10 @@ node program.wasm
 | WASM execution | Runs in browser | Chrome, Firefox, Edge |
 | WASM execution | Runs in Node.js | v18+ |
 | Performance (LLVM) | ≥ 1.5x better | vs C99 backend |
+
+---
+
+### Diagnostics & Test Infrastructure (0.2)
 
 #### 🎯 Objectives
 
@@ -917,10 +1041,10 @@ Proposal RFC → Implementation → Testing Beta → Community Feedback → Rele
 
 ```bash
 git clone https://github.com/nazar-ponomarenko-dots/Terra
-cd terra
+cd Terra
 cmake -S . -B build -G Ninja
-ninja -C build
-ninja -C build test
+cmake --build build
+ctest --test-dir build
 ```
 
 ---

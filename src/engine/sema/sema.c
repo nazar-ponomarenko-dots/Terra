@@ -1027,6 +1027,69 @@ static bool is_constant_zero_int(const tess_expr *e) {
     return false;
 }
 
+/* Evaluate an integer expression at compile time. Returns false when the
+ * expression is not a constant or when evaluating it would overflow, so the
+ * caller can defer to runtime behavior instead of rejecting valid code. */
+static bool eval_const_int(const tess_expr *e, int64_t *out) {
+    if (e == NULL || out == NULL) return false;
+    int64_t a = 0, b = 0, r = 0;
+    switch (e->kind) {
+        case TESS_EXPR_INT:
+            *out = e->as.int_value;
+            return true;
+        case TESS_EXPR_UNARY:
+            if (!eval_const_int(e->as.unary.operand, &a)) return false;
+            switch (e->as.unary.op) {
+                case TESS_UN_POS: *out = a; return true;
+                case TESS_UN_NEG:
+                    if (a == INT64_MIN) return false;
+                    *out = -a;
+                    return true;
+                case TESS_UN_BIT_NOT: *out = ~a; return true;
+                default: return false;
+            }
+        case TESS_EXPR_BINARY:
+            if (!eval_const_int(e->as.binary.lhs, &a) ||
+                !eval_const_int(e->as.binary.rhs, &b)) return false;
+            switch (e->as.binary.op) {
+                case TESS_BIN_ADD:
+                    if (__builtin_add_overflow(a, b, &r)) return false;
+                    break;
+                case TESS_BIN_SUB:
+                    if (__builtin_sub_overflow(a, b, &r)) return false;
+                    break;
+                case TESS_BIN_MUL:
+                    if (__builtin_mul_overflow(a, b, &r)) return false;
+                    break;
+                case TESS_BIN_DIV:
+                    if (b == 0 || (a == INT64_MIN && b == -1)) return false;
+                    r = a / b;
+                    break;
+                case TESS_BIN_MOD:
+                    if (b == 0 || (a == INT64_MIN && b == -1)) return false;
+                    r = a % b;
+                    break;
+                case TESS_BIN_SHL:
+                    if (b < 0 || b >= 64) return false;
+                    if (a < 0 || (b != 0 && a > (INT64_MAX >> b))) return false;
+                    r = (int64_t)((uint64_t)a << b);
+                    break;
+                case TESS_BIN_SHR:
+                    if (b < 0 || b >= 64) return false;
+                    r = a >> b;
+                    break;
+                case TESS_BIN_BIT_OR: r = a | b; break;
+                case TESS_BIN_BIT_XOR: r = a ^ b; break;
+                case TESS_BIN_BIT_AND: r = a & b; break;
+                default: return false;
+            }
+            *out = r;
+            return true;
+        default:
+            return false;
+    }
+}
+
 /* -------------------------------------------------------------------------
  * Expression checker with type checking
  * ------------------------------------------------------------------------- */
@@ -1519,12 +1582,21 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
              * behavior in the generated C; reject it at compile time.
              * Float division by zero is well-defined IEEE arithmetic. */
             if ((op == TESS_BIN_DIV || op == TESS_BIN_MOD) &&
-                lhs_type == TYPE_INT &&
-                is_constant_zero_int(e->as.binary.rhs)) {
-                report(s, e->start, e->end,
-                       op == TESS_BIN_DIV ? "division by zero"
-                                          : "modulo by zero");
-                return false;
+                lhs_type == TYPE_INT) {
+                if (is_constant_zero_int(e->as.binary.rhs)) {
+                    report(s, e->start, e->end,
+                           op == TESS_BIN_DIV ? "division by zero"
+                                              : "modulo by zero");
+                    return false;
+                }
+                int64_t lhs_const = 0, rhs_const = 0;
+                if (eval_const_int(e->as.binary.lhs, &lhs_const) &&
+                    eval_const_int(e->as.binary.rhs, &rhs_const) &&
+                    lhs_const == INT64_MIN && rhs_const == -1) {
+                    report(s, e->start, e->end,
+                           "signed division overflow (INT64_MIN / -1)");
+                    return false;
+                }
             }
 
             /* Comparison operators: operands must be comparable types */
@@ -1576,6 +1648,15 @@ static bool check_expr(tess_sema *s, tess_expr *e) {
                              lhs_type == TYPE_INT ? "int" : "non-int",
                              rhs_type == TYPE_INT ? "int" : "non-int");
                     report(s, e->start, e->end, msg);
+                    return false;
+                }
+                /* Shift counts outside [0, 63] are undefined behavior in the
+                 * generated C; reject constants instead of emitting them. */
+                int64_t shift = 0;
+                if (eval_const_int(e->as.binary.rhs, &shift) &&
+                    (shift < 0 || shift >= 64)) {
+                    report(s, e->start, e->end,
+                           "shift count out of range (expected 0..63)");
                     return false;
                 }
             }

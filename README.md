@@ -30,56 +30,38 @@ Hello there!
 ## 🚀 Features
 
 - **Fast Compilation**: Optimized for speed and efficiency
-- **Cross-platform**: Works on Linux, macOS, and Windows
+- **Cross-platform C99 output**: Linux, macOS, and Windows
 - **Modern C**: Written in C23 with best practices
 - **Error Handling**: Comprehensive error reporting
 
-## 🧩 Language Notes (current prototype)
+## 🗺️ Mini roadmap
 
-- Classes declare fields (`name: type;`) and methods (`name { ... }` or
-  `name(args: type) { ... }`).
-- `Class.new` allocates a zeroed instance; `Class.init(args)` allocates one and
-  calls `init`.
-- A field whose type is a user-defined class is a pointer to an instance, so a
-  class may reference another class declared later in the same file.
-- Methods can be called with or without parentheses (`obj.run;` is `obj.run()`).
-- `let name = value;` explicitly declares a variable. Existing assignment syntax
-  remains available for updates and backwards compatibility.
-- `fn main() { ... }` is the application entry point. A program without it keeps
-  script-style top-level execution.
-- C-style `for` loops accept declarations, conditions, and assignment steps:
-  `for (let i = 0; i < limit; i = i + 1) { ... }`; `break;` and `continue;`
-  work inside both `for` and `while` loops.
-- Top-level `link "library";` adds a native linker dependency when using
-  `--compile` (for example, `link "sqlite3";` becomes `-lsqlite3`).
-- Built-ins: `put`, `print`, `len`, `str`, `int`, `float`, `assert`, `input`.
-- Builtin string methods (Python-flavoured standard library): `len`, `at`
-  (bounds-checked), `find`, `count`, `is_empty`, `contains`, `starts_with`,
-  `ends_with`, `upper`, `lower`, `trim`, `replace`, `reverse`, `repeat` and
-  `substr`. Methods chain naturally: `s.trim().upper()`. Methods that build a
-  new string (`upper`, `replace`, ...) allocate; `at` panics on an
-  out-of-range index.
-- The native `math` module wraps C99 `<math.h>`: `@math.sqrt`, `@math.pow`,
-  `@math.floor`, `@math.ceil`, `@math.round`, `@math.abs`, `@math.min`,
-  `@math.max`, `@math.exp`, `@math.log`. Unknown members are compile-time
-  errors, not link errors.
-- `--safe` runtime checking: with the flag, integer `+ - * / %` overflow and
-  division by zero panic with a `runtime error:` message, and array/slice
-  indexing is bounds-checked. Float math and pointer arithmetic stay
-  unchecked.
-- Native interop: `import "stdio.h"; extern fn printf(format: str, ...): i32;`
-  followed by ordinary `printf(...)` calls. Existing `@c.printf(...)` and
-  `@math.sqrt(...)` calls remain available.
-- C ABI types include `i8`/`u8` through `i64`/`u64`, `usize`, `isize`, `ptr`,
-  and explicit aliases such as `c_int` and `c_ulong`. Unknown identifier types
-  in an `extern fn` signature are opaque C typedefs; `FILE` maps to `FILE*`.
-- Systems features include fixed arrays (`let a: i32[4] = [1, 2, 3, 4];`),
-  typed slices (`let view: slice[i32] = a[1:3];`), indexing, pointer types
-  (`i32*`), `&` and `*`, C-layout `struct` and `union` declarations with
-  aggregate initializers, and `volatile` qualified types.
-- `asm("instruction");` and `asm volatile("instruction");` emit GNU-style
-  inline assembly templates. Assembly constraints and operands are not yet
-  represented by source syntax.
+> Terra is a prototype; the language and generated output may change. Current
+> stage: **0.5 — standard library and safe runtime**.
+
+| Version | Milestone | Status |
+|---------|-----------|--------|
+| 0.1 | Lexer, parser, sema, first C99 codegen | ✅ |
+| 0.2 | Diagnostics and test foundation | ✅ |
+| 0.3 | Production C99 backend, modular engine | ✅ |
+| 0.4 | Native C interop (`import`, `extern fn`, `link`, `--compile`), `fn main`, `for` loops, systems types: arrays, slices, pointers, C-layout `struct`/`union`, `asm` | ✅ |
+| 0.5 | Standard library: string methods, validated `math`, `--safe` arithmetic/indexing, binary/hex literals | 🏗️ current |
+| 0.6 | Broader standard library and package manager | 🔵 planned |
+| 0.7 | Concurrency and parallelism | 🔵 planned |
+| 0.8 | Advanced type system | 🔵 planned |
+| 0.9 | Tooling: LSP, formatter, debugger | 🔵 planned |
+| 1.0 | Stability and production readiness | 🔵 planned |
+| 2.0 | Native/LLVM backend, cross-platform, distributed compilation | 🔮 future |
+| 3.0 | Ecosystem: ML, edge and quantum experiments | 🔮 future |
+
+What works now: `put`/`print`/`len`/`str`/`int`/`float`/`assert`/`input`,
+Python-style string methods, native interop via `import "header.h"` +
+`extern fn` (see [c_import.t](examples/c_import.t) and
+[c_file.t](examples/c_file.t)), and freestanding objects via `--freestanding`.
+File-based Tesseract module imports remain unsupported; executable builds are
+POSIX-only, while C source generation works on all supported platforms.
+
+Small scoped tasks: [road.txt](road.txt) · full plan: [ROADMAP.md](ROADMAP.md).
 
 ## 📋 Requirements
 
@@ -89,7 +71,7 @@ Hello there!
 - **Build System**: Ninja (recommended) or Make
 
 ### Runtime Dependencies
-- **POSIX-compliant terminal** (for animation feature)
+- **POSIX system** for `--compile` (C source generation works everywhere)
 - **Math library** (linked automatically)
 
 ## 🛠️ Building
@@ -150,78 +132,9 @@ rm -rf bin/ build/
 
 ```
 
-> Terra emits C99-style source that uses a few GNU extensions (`__auto_type`,
-> statement expressions) for assign-to-declare and `Class.init(...)`. Build the
-> result with GCC/Clang in GNU mode, e.g. `cc output.c -o program`.
-
-### Native C headers and libraries
-
-Import a system header directly. `extern fn` gives the call a checked Tesseract
-signature and emits a C prototype; the included header lets the C compiler
-check that prototype against the library declaration:
-
-```tesseract
-import "stdio.h";
-extern fn printf(format: str, ...): i32;
-
-let value = 42;
-printf("value = %lld\n", value);
-```
-
-```sh
-./bin/terra examples/c_import.t -o /tmp/c_import.c
-cc /tmp/c_import.c -o /tmp/c_import
-```
-
-For libraries that need a linker flag, pass it to the C compiler when building
-the generated source, for example `cc app.c -lsqlite3 -o app`, or declare it in
-the source and use the executable build mode:
-
-```tesseract
-import "sqlite3.h" as sqlite;
-link "sqlite3";
-```
-
-```sh
-./bin/terra app.t --compile -o app
-```
-
-`--compile` invokes the selected compiler directly, without a shell, and
-publishes the executable only after a successful compile. Select another
-compiler with `--cc /path/to/cc`. Header names and library names are validated.
-Variadic calls follow the C ABI, including C's default argument promotions and
-format-string rules.
-
-Cross-compilation passes a target triple to Clang:
-
-```sh
-terra app.t --compile --cc clang --target aarch64-unknown-linux-gnu -o app
-```
-
-`--freestanding` emits a relocatable object (`terra.o` by default) without a
-hosted runtime prelude or system link step. Functions, records, arrays, slices,
-pointers, and inline assembly are supported. Hosted built-ins, Terra classes,
-and executable top-level statements are rejected in this mode. Startup code,
-the linker script, and the platform runtime are supplied when linking:
-
-```sh
-terra kernel.t --compile --cc clang --target x86_64-unknown-none-elf \
-  --freestanding -o kernel.o
-```
-
-An opaque C typedef can be used without exposing its layout:
-
-```tesseract
-import "stdio.h";
-extern fn fopen(path: str, mode: str): FILE;
-extern fn fputs(text: str, stream: FILE): i32;
-extern fn fclose(stream: FILE): i32;
-```
-
-See [c_file.t](/home/votbotcot/Terra/examples/c_file.t) for a complete example.
-File-based Tesseract module imports remain unsupported. The executable build
-mode is currently POSIX-only; C source generation remains available on all
-supported platforms.
+> Terra emits standard C99 source that builds with GCC or Clang, e.g.
+> `cc output.c -o program`. Inline assembly (`asm(...)`) additionally requires
+> GNU assembler syntax.
 
 ### Command Line Options
 
@@ -235,6 +148,8 @@ supported platforms.
 | | `--stdout` | Write generated C to standard output |
 | | `--compile` | Compile generated C into an executable |
 | | `--cc <path>` | Select compiler for `--compile` |
+| | `--target <triple>` | Cross-compile with the selected C compiler (needs a sysroot) |
+| | `--freestanding` | Emit a freestanding relocatable object (`.o`) |
 | | `--safe` | Runtime-check arithmetic and indexing (panic instead of UB) |
 | `-q` | `--quiet` | Suppress progress messages |
 | | `--` | Treat all following arguments as paths |
@@ -249,7 +164,7 @@ supported platforms.
 
 ### Code Style
 
-This project follows the following coding standards:
+This project follows these coding standards:
 - **C23 Standard** compliance
 - **4-space indentation** (no tabs)
 - **Snake_case** for functions and variables

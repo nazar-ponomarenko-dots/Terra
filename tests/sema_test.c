@@ -144,6 +144,10 @@ static void test_constant_divmod_zero(void) {
     check(sema_ok("put(1.0/0.0);\n"),"float division by zero passes (IEEE)");
     check(sema_ok("d = 0;\nput(1/d);\n"),
           "division by a non-constant zero variable passes");
+    check(sema_err("put((-9223372036854775807 - 1) / -1);\n"),
+          "signed division overflow INT64_MIN / -1 is rejected");
+    check(sema_err("put((-9223372036854775807 - 1) % -1);\n"),
+          "signed modulo overflow INT64_MIN % -1 is rejected");
 }
 
 static void test_string_methods(void) {
@@ -184,6 +188,12 @@ static void test_shift_operators(void) {
           "shift of float is rejected");
     check(sema_err("put(\"a\" >> 1);\n"),
           "shift of string is rejected");
+    check(sema_err("put(1 << 64);\n"),
+          "constant shift count >= 64 is rejected");
+    check(sema_err("put(1 << -1);\n"),
+          "negative constant shift count is rejected");
+    check(sema_ok("put(1 << 62);\n"),
+          "in-range constant shift count passes");
 }
 
 static void test_duplicate_class(void) {

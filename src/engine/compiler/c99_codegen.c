@@ -1757,7 +1757,7 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
             bool checked_arith = false;
             if (gen->safe &&
                 expr->as.binary.op >= TESS_BIN_ADD &&
-                expr->as.binary.op <= TESS_BIN_MOD &&
+                expr->as.binary.op <= TESS_BIN_SHR &&
                 !lhs_str && !rhs_str) {
                 const char *tn = expr_type_name(gen, expr);
                 const char *ln = expr_type_name(gen, expr->as.binary.lhs);
@@ -1770,7 +1770,8 @@ static void c99_codegen_expr(c99_codegen *gen, tess_expr *expr) {
                 static const char *const checked_ops[] = {
                     "terra_checked_add", "terra_checked_sub",
                     "terra_checked_mul", "terra_checked_div",
-                    "terra_checked_mod"
+                    "terra_checked_mod", "terra_checked_shl",
+                    "terra_checked_shr"
                 };
                 append_str(gen, checked_ops[expr->as.binary.op - TESS_BIN_ADD]);
                 append_str(gen, "(");
@@ -2787,8 +2788,10 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
     append_str(gen,
         "#if defined(__GNUC__) || defined(__clang__)\n"
         "#define TERRA_MAYBE_UNUSED __attribute__((unused))\n"
+        "#define TERRA_NORETURN __attribute__((noreturn))\n"
         "#else\n"
         "#define TERRA_MAYBE_UNUSED\n"
+        "#define TERRA_NORETURN\n"
         "#endif\n\n");
     if (gen->runtime_used & RT_PUT_INT) {
         append_str(gen,
@@ -2803,8 +2806,12 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
             "TERRA_MAYBE_UNUSED static inline void put_str(const char* s){ printf(\"%s\\n\", s ? s : \"(null)\"); }\n");
     }
     if (gen->runtime_used & RT_PANIC) {
+        /* A runtime check failure means the program already violated an
+         * invariant. Recovery is not offered: terminate immediately so code
+         * cannot continue in a compromised state, and mark the function
+         * noreturn so the C compiler does not assume it returns. */
         append_str(gen,
-            "TERRA_MAYBE_UNUSED static void terra_panic(const char* msg){ fprintf(stderr, \"runtime error: %s\\n\", msg); exit(1); }\n");
+            "TERRA_MAYBE_UNUSED TERRA_NORETURN static void terra_panic(const char* msg){ fprintf(stderr, \"runtime error: %s\\n\", msg); abort(); }\n");
     }
     if (gen->safe) {
         append_str(gen,
@@ -2842,6 +2849,17 @@ void c99_codegen_print_runtime_info(c99_codegen *gen) {
             "    if(b == 0) terra_panic(\"modulo by zero\");\n"
             "    if(a == LLONG_MIN && b == -1) terra_panic(\"integer overflow\");\n"
             "    return a % b;\n"
+            "}\n");
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_checked_shl(long long a, long long b){\n"
+            "    if(b < 0 || b >= 64) terra_panic(\"shift count out of range\");\n"
+            "    if(a < 0 || (b != 0 && a > (LLONG_MAX >> b))) terra_panic(\"integer overflow\");\n"
+            "    return a << b;\n"
+            "}\n");
+        append_str(gen,
+            "TERRA_MAYBE_UNUSED static inline long long terra_checked_shr(long long a, long long b){\n"
+            "    if(b < 0 || b >= 64) terra_panic(\"shift count out of range\");\n"
+            "    return a >> b;\n"
             "}\n");
     }
     if (gen->runtime_used & RT_STR_AT) {

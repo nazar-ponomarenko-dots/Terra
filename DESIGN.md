@@ -10,9 +10,9 @@ Security is achieved not through compiler constraints, but through **Architectur
 3. **Logic Trust**: Semantic analysis serves as a mandatory "checkpoint" before code generation.
 
 # Architecture Pipeline
-1. **Frontend**: Lexer & Parser $\rightarrow$ AST (Syntax Convenience).
-2. **Middle-end**: Semantics Pass $\rightarrow$ Type & Scope Check (Architectural Security).
-3. **Backend**: Codegen / VM $\rightarrow$ Execution (C-level Speed).
+1. **Frontend**: Lexer & Parser → AST (Syntax Convenience).
+2. **Middle-end**: Semantics Pass → Type & Scope Check (Architectural Security).
+3. **Backend**: Codegen / VM → Execution (C-level Speed).
 
 # Quality Standards
 - **Memory**: Arena-First. Prohibition of manual `free()` for AST objects.
